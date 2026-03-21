@@ -1,0 +1,6 @@
+"NAME","DESCR","CODE"
+"Creado","pedido Creado","C"
+"En proceso"," pedido en proceso","P"
+"Finalizado","pedido finalizado","F"
+"Disponible","entrada disponible","D"
+"Vendido","entrada vendida","V"

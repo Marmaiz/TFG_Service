@@ -1,0 +1,45 @@
+{
+  "scopes": [
+    {
+      "name": "$XSAPPNAME.Admin",
+      "description": "Admin"
+    },
+    {
+      "name": "$XSAPPNAME.Comercial",
+      "description": "Comercial"
+    },
+    {
+      "name": "$XSAPPNAME.Produccion",
+      "description": "Produccion"
+    }
+  ],
+  "attributes": [],
+  "role-templates": [
+    {
+      "name": "Admin",
+      "description": "generated",
+      "scope-references": [
+        "$XSAPPNAME.Admin"
+      ],
+      "attribute-references": []
+    },
+    {
+      "name": "Comercial",
+      "description": "generated",
+      "scope-references": [
+        "$XSAPPNAME.Comercial"
+      ],
+      "attribute-references": []
+    },
+    {
+      "name": "Produccion",
+      "description": "generated",
+      "scope-references": [
+        "$XSAPPNAME.Produccion"
+      ],
+      "attribute-references": []
+    }
+  ],
+  "xsappname": "MGMTFG",
+  "tenant-mode": "dedicated"
+}

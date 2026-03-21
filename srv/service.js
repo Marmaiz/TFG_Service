@@ -1,0 +1,250 @@
+
+const cds = require('@sap/cds');
+const { Entrada } = cds.entities;
+
+module.exports = srv => {
+
+    srv.before('CREATE', 'Pedido', async req => {
+        const data = req.data;
+        const { Cliente_Id } = req.data;
+
+        if (!Cliente_Id) throw new Error('Cliente requerido');
+
+        const tx = cds.tx(req);
+        const cliente = await tx.read('Cliente').where({ Id: Cliente_Id }).columns('Nombre');
+
+        if (!cliente.length || !cliente[0].Nombre) throw new Error('Cliente no encontrado');
+
+        const prefix = cliente[0].Nombre.slice(0, 4).toUpperCase();
+        const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const sec = Math.floor(Math.random() * 1000);
+
+        req.data.Id_Display = `${prefix}-${date}-${sec.toString().padStart(3, '0')}`;
+    });
+
+
+    srv.before('CREATE', 'Linea', async req => {
+        const { Pedido_Id } = req.data;
+        if (!Pedido_Id) throw new Error('Línea requiere Pedido_Id');
+
+        const tx = cds.tx(req);
+
+        // 1. Obtener ID_Display del Pedido (no UUID)
+        const pedido = await tx.read('Pedido').where({ Id: Pedido_Id }).columns('Id_Display');
+        if (!pedido.length) throw new Error('Pedido no encontrado');
+        const pedDisplay = pedido[0].Id_Display;
+
+        // 2. Siguiente NumLinea correlativa        
+        const maxResult = await tx.run(
+            SELECT`max(NumLinea) as maxNum`
+                .from('Linea')
+                .where({ Pedido_Id })
+        );
+        const maxLinea = maxResult[0]?.maxNum || 0;  
+        const num = maxLinea + 1;
+
+        // 3. ID_Display: PEDIDO-ID-L01
+        req.data.NumLinea = num;
+        req.data.Id_Display = `${pedDisplay}-L${num.toString().padStart(2, '0')}`;
+    });
+
+
+    srv.before('CREATE', 'Entrada', (req) => {
+
+        if (req.data.Kilos == null) {
+            req.error(400, 'El campo Kilos es obligatorio');
+            return;
+        }
+        // al crear la entrada igualo los kilos a los kilos disponibles
+        req.data.Kilos_disponibles = req.data.Kilos;
+
+    });
+
+    /**
+     * codigo a ejecutar antes (BEFORE) de crear un registro en Trazabilidad
+     */
+    srv.before('CREATE', 'Trazabilidad', async (req) => {
+
+        /*Extraigo de req.data que contiene los datos que el cliente está intentando crear, el ID y los kilos*/
+        var Entrada_Id = req.data.Entrada_Id;
+        var Kilos_Usados = req.data.Kilos_Usados;
+        var Linea_Id = req.data.Linea_Id;
+
+        var Kilos_Merma = Number(req.data.Kilos_Merma || 0);
+
+        const kilosTotales = Kilos_Usados + Kilos_Merma;
+
+        /*Detengo la ejecucion si no existen los datos*/
+        if (!Entrada_Id || !Kilos_Usados) return;
+
+        /*Creo una variable que almacene la transaccion ligada al request
+            Todo lo que se ejecute con tx.run():
+                Se confirma (commit) si todo sale bien
+                Se revierte (rollback) si ocurre un error */
+        const tx = cds.tx(req);
+
+
+
+        const entrada = await tx.run(
+            /* SELECT.one.from(Entrada).where({ Id: Entrada_Id }) */
+            SELECT.from(Entrada, Entrada_Id)
+        );
+
+        const linea = await tx.run(
+            SELECT.one.from('Linea').where({ Id: Linea_Id })
+        );
+
+        /*Validar que la Entrada exista*/
+        if (!entrada) {
+            req.error(404, 'Entrada no encontrada');
+            return;
+        }
+        /*Validar kilos disponibles*/
+        if (entrada.Kilos_disponibles < Kilos_Usados) {
+            req.error(400, 'No hay kilos disponibles suficientes');
+            return;
+        }
+
+        /*Validar que la linea exista*/
+        if (!linea) {
+            req.error(404, 'Línea no encontrada');
+            return;
+        }
+
+        if (entrada.Kilos_disponibles < kilosTotales) {
+            req.error(400, 'Kilos usados + merma superan los disponibles');
+            return;
+        }
+
+        /* Calcular kilos ya usados en la línea */
+        const result = await tx.run(
+            SELECT.one
+                .from('Trazabilidad')
+                .columns`sum(Kilos_Usados) as total`
+                .where({ Linea_Id })
+        );
+
+        const kilosUsadosLinea = result?.total || 0;
+
+        /* Validar que no se superen los kilos de la línea */
+        if (kilosUsadosLinea + Kilos_Usados > linea.Kilos) {
+            req.error(
+                400,
+                `Se superan los kilos de la línea. Kilos faltantes: ${linea.Kilos - kilosUsadosLinea}`
+            );
+            return;
+        }
+
+        /*Actualizar kilos disponibles en la Entrada, dentro de la misma transacción (tx)
+        garantizando que si falla la creación de Trazabilidad, no se descuentan los kilos*/
+        await tx.run(
+            UPDATE(Entrada)
+                .set({
+                    Kilos_disponibles: entrada.Kilos_disponibles - kilosTotales,
+                    Kilos_Merma: (entrada.Kilos_Merma || 0) + Kilos_Merma
+                })
+                .where({ Id: Entrada_Id })
+        );
+
+        /* 🔒 Limpieza: evitamos que CAP intente persistir Kilos_Merma */
+        delete req.data.Kilos_Merma;
+    });
+
+    /**finalizar pedido */
+    srv.before('UPDATE', 'Pedido', async (req) => {
+
+        // Verifico que exista el campo Estado del pedido
+        const nuevoEstado = req.data.Estado_code;
+        if (!nuevoEstado) return;
+
+        // Declaro una variable para almacenar la transaccion
+        const tx = cds.tx(req);
+
+        // Selecciono el pedido de la consulta 
+        const pedido = await tx.run(
+            SELECT.one.from('Pedido').where({ Id: req.data.Id })
+        );
+
+        // Selecciono las líneas del pedido
+        const lineas = await tx.run(
+            SELECT.from('Linea').where({ Pedido_Id: pedido.Id })
+        );
+
+        // Hago las comprobaciones
+        if (!pedido) {
+            req.error(404, 'Pedido no encontrado');
+            return;
+        }
+
+        if (!lineas.length) {
+            req.error(400, 'El pedido no tiene líneas');
+            return;
+        }
+
+        // Valido que las lineas tengan los campos obligatorios, y kilos con un valor positivo
+        for (const linea of lineas) {
+            if (
+                !linea.Producto_Id ||
+                !linea.Variedad_Id ||
+                !linea.Caja_Id ||
+                !linea.Calibre_Id ||
+                !linea.Kilos ||
+                linea.Kilos <= 0
+            ) {
+                req.error(400, 'Existen líneas con campos obligatorios vacíos');
+                return;
+            }
+        }
+
+        // Compruebo que el pedido no este finalizado ya
+        if (pedido.Estado_code === 'F') {
+            req.error(400, 'El pedido ya está finalizado');
+            return;
+        }
+
+        if (nuevoEstado === 'F') {
+            // Valido que al pedido se le hayan asignado entradas antes de cambiar su estado de Creado a Procesando
+            let trazabilidad = await tx.run(
+                SELECT.from('Trazabilidad')
+                    .where({ 'Linea.Pedido_Id': pedido.Id })
+            );
+
+            if (!trazabilidad.length) {
+                req.error(400, 'El pedido no tiene asignada entradas');
+                return;
+            }
+
+            const lineas = await tx.run(
+                SELECT.from('Linea').where({ Pedido_Id: pedido.Id })
+            );
+
+            for (const linea of lineas) {
+                const result = await tx.run(
+                    SELECT.one
+                        .from('Trazabilidad')
+                        .columns`sum(Kilos_Usados) as total`
+                        .where({ Linea_Id: linea.Id })
+                );
+
+                // Devuelve los kilos asignados, si no existen asumo que son 0 kilos
+                const kilosAsignados = result?.total || 0;
+
+                if (kilosAsignados !== linea.Kilos) {
+                    req.error(
+                        400,
+                        'No se puede finalizar la línea, faltan kilos.'
+                    );
+                    return;
+                }
+            }
+        }
+
+    });
+
+
+
+
+
+
+
+};

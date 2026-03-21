@@ -1,0 +1,225 @@
+_schema-version: '3.1'
+ID: MGMTFG
+version: 1.0.0
+description: A simple CAP project.
+parameters:
+  deploy_mode: html5-repo
+  enable-parallel-deployments: true
+  subdomain: 39d18bcftrial
+build-parameters:
+  before-all:
+    - builder: custom
+      commands:
+        - rm -rf build/dist
+        - mkdir -p build/dist
+        - rm -rf build/ui-deployer
+        - mkdir -p build/ui-deployer
+    - builder: custom
+      commands:
+        - npm install --production
+        - >-
+          bash -c "cds -v | grep 'cds-dk' || npm i --production --no-save @sap/cds-dk"
+        - bash -c "export PATH=$PATH:$(pwd)/node_modules/.bin"
+        - cds build --production
+  after-all:
+    - builder: custom
+      commands:
+        - npm install
+modules:
+  - name: MGMTFG-db-deployer
+    type: hdb
+    path: gen/db
+    parameters:
+      buildpack: nodejs_buildpack
+    build-parameters:
+      builder: npm
+      ignore:
+        - node_modules
+        - package-lock.json
+    requires:
+      - name: MGMTFG-service-uaa
+      - name: MGMTFG-service-db
+  - name: MGMTFG-srv
+    type: nodejs
+    path: gen/srv
+    parameters:
+      memory: 256MB
+    provides:
+      - name: srv-api
+        properties:
+          srv-url: ${default-url}
+    build-parameters:
+      builder: npm
+      ignore:
+        - node_modules
+        - package-lock.json
+    requires:
+      - name: MGMTFG-service-uaa
+      - name: MGMTFG-service-db
+      - name: MGMTFG-service-destination
+      - name: MGMTFG-service-metadata
+      - name: MGMTFG-service-connectivity
+      - name: MGMTFG-service-logs
+  - name: MGMTFG-aux-destinations
+    type: com.sap.application.content
+    parameters:
+      content:
+        subaccount:
+          existing_destinations_policy: update
+          destinations:
+            - Authentication: OAuth2UserTokenExchange
+              Name: MGMTFG-service-uaa
+              ServiceInstanceName: MGMTFG-uaa
+              ServiceKeyName: MGMTFG-uaa-key
+              sap.cloud.service: lcap.MGMTFG
+            - Authentication: OAuth2UserTokenExchange
+              Name: MGMTFG-app-srv
+              TokenServiceInstanceName: MGMTFG-uaa
+              TokenServiceKeyName: MGMTFG-uaa-key
+              URL: ~{srv-api/srv-url}
+              sap.cloud.service: lcap.MGMTFG
+            - Name: MGMTFG-service-html5-apps-repo-host
+              ServiceInstanceName: MGMTFG-html5-apps-repo-host
+              ServiceKeyName: MGMTFG-html5-apps-repo-host-key
+              sap.cloud.service: lcap.MGMTFG
+            - Authentication: OAuth2UserTokenExchange
+              Name: MGMTFG-MasterDataService
+              TokenServiceInstanceName: MGMTFG-uaa
+              TokenServiceKeyName: MGMTFG-uaa-key
+              URL: ~{srv-api/srv-url}/service/MasterDataService
+              sap.cloud.service: lcap.MGMTFG
+              sap.applicationdevelopment.actions.enabled: false
+              sap.build.usage: CAP
+              sap.processautomation.enabled: false
+              HTML5.DynamicDestination: false
+              WebIDEEnabled: false
+              MobileEnabled: false
+              AppgyverEnabled: false
+            - Authentication: OAuth2UserTokenExchange
+              Name: MGMTFG-PedidosService
+              TokenServiceInstanceName: MGMTFG-uaa
+              TokenServiceKeyName: MGMTFG-uaa-key
+              URL: ~{srv-api/srv-url}/service/PedidosService
+              sap.cloud.service: lcap.MGMTFG
+              sap.applicationdevelopment.actions.enabled: false
+              sap.build.usage: CAP
+              sap.processautomation.enabled: false
+              HTML5.DynamicDestination: false
+              WebIDEEnabled: false
+              MobileEnabled: false
+              AppgyverEnabled: false
+    build-parameters:
+      no-source: true
+    requires:
+      - name: MGMTFG-service-uaa
+        parameters:
+          service-key:
+            name: MGMTFG-uaa-key
+      - name: srv-api
+      - name: MGMTFG-service-html5-apps-repo-host
+        parameters:
+          service-key:
+            name: MGMTFG-html5-apps-repo-host-key
+      - name: MGMTFG-service-destination
+        parameters:
+          content-target: true
+  - name: MGMTFG-launchpad
+    type: html5
+    path: build/launchpad
+    build-parameters:
+      builder: custom
+      commands:
+        - npm install
+        - >-
+          npx -p @ui5/cli@^3.0.0 ui5 build --dest dist --include-task=generateCachebusterInfo
+        - bash -c "cd dist && npx bestzip ../../../build/dist/launchpad.zip *"
+        - rm -rf dist
+      _artifactName: launchpad.zip
+      supported-platforms:
+        []
+      build-result: ../../build/dist
+  - name: MGMTFG-aux-ui-deployer
+    type: com.sap.application.content
+    path: build/ui-deployer
+    build-parameters:
+      build-result: resources
+      requires:
+        - name: MGMTFG-launchpad
+          artifacts:
+            - launchpad.zip
+          target-path: resources
+    requires:
+      - name: MGMTFG-service-html5-apps-repo-host
+        parameters:
+          content-target: true
+resources:
+  - type: org.cloudfoundry.managed-service
+    name: MGMTFG-service-uaa
+    parameters:
+      service: xsuaa
+      service-plan: application
+      service-name: MGMTFG-uaa
+      path: xs-security.json
+      config:
+        oauth2-configuration:
+          redirect-uris:
+            - https://${subdomain}.launchpad.${default-domain}/login/*
+            - https://${subdomain}.${default-domain}/login/*
+          credential-types:
+            - binding-secret
+            - x509
+        xsappname: MGMTFG-${space}
+        role-collections:
+          - description: Admin
+            name: MGMTFG-Admin-${space}
+            role-template-references:
+              - $XSAPPNAME.Admin
+          - description: Comercial
+            name: MGMTFG-Comercial-${space}
+            role-template-references:
+              - $XSAPPNAME.Comercial
+          - description: Produccion
+            name: MGMTFG-Produccion-${space}
+            role-template-references:
+              - $XSAPPNAME.Produccion
+  - type: org.cloudfoundry.managed-service
+    name: MGMTFG-service-db
+    parameters:
+      service: hana
+      service-plan: hdi-shared
+      service-name: MGMTFG-db
+  - type: org.cloudfoundry.managed-service
+    name: MGMTFG-service-destination
+    parameters:
+      service: destination
+      service-plan: lite
+      service-name: MGMTFG-destination
+      config:
+        HTML5Runtime_enabled: true
+        version: 1.0.0
+  - type: org.cloudfoundry.user-provided-service
+    name: MGMTFG-service-metadata
+    parameters:
+      service: metadata
+      service-plan: standard
+      service-name: MGMTFG-metadata
+      config:
+        default-domain: ${default-domain}
+  - type: org.cloudfoundry.managed-service
+    name: MGMTFG-service-connectivity
+    parameters:
+      service: connectivity
+      service-plan: lite
+      service-name: MGMTFG-connectivity
+  - type: org.cloudfoundry.managed-service
+    name: MGMTFG-service-logs
+    parameters:
+      service: application-logs
+      service-plan: lite
+      service-name: MGMTFG-logs
+  - type: org.cloudfoundry.managed-service
+    name: MGMTFG-service-html5-apps-repo-host
+    parameters:
+      service: html5-apps-repo
+      service-plan: app-host
+      service-name: MGMTFG-html5-apps-repo-host
