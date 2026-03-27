@@ -46,6 +46,10 @@ module.exports = srv => {
         // 3. ID_Display: PEDIDO-ID-L01
         req.data.NumLinea = num;
         req.data.Id_Display = `${pedDisplay}-L${num.toString().padStart(2, '0')}`;
+                // 4. Inicializar Kilos_Restantes igual a Kilos
+        if (req.data.Kilos) {
+            req.data.Kilos_Restantes = req.data.Kilos;
+        }
     });
 
 
@@ -94,43 +98,34 @@ module.exports = srv => {
             SELECT.one.from('Linea').where({ Id: Linea_Id })
         );
 
+   /* validacion de la entrada */
         /*Validar que la Entrada exista*/
         if (!entrada) {
             req.error(404, 'Entrada no encontrada');
             return;
         }
-        /*Validar kilos disponibles*/
+        /*Validar kilos disponibles de la entrada*/
         if (entrada.Kilos_disponibles < Kilos_Usados) {
             req.error(400, 'No hay kilos disponibles suficientes');
             return;
         }
+        if (entrada.Kilos_disponibles < kilosTotales) {
+            req.error(400, 'Kilos usados + merma superan los disponibles');
+            return;
+        }
 
+/* validacion de la linea */
         /*Validar que la linea exista*/
         if (!linea) {
             req.error(404, 'Línea no encontrada');
             return;
         }
 
-        if (entrada.Kilos_disponibles < kilosTotales) {
-            req.error(400, 'Kilos usados + merma superan los disponibles');
-            return;
-        }
-
-        /* Calcular kilos ya usados en la línea */
-        const result = await tx.run(
-            SELECT.one
-                .from('Trazabilidad')
-                .columns`sum(Kilos_Usados) as total`
-                .where({ Linea_Id })
-        );
-
-        const kilosUsadosLinea = result?.total || 0;
-
-        /* Validar que no se superen los kilos de la línea */
-        if (kilosUsadosLinea + Kilos_Usados > linea.Kilos) {
+        /* Validar que no se superen los kilos restantes de la línea */
+        if (linea.Kilos_Restantes < Kilos_Usados) {
             req.error(
                 400,
-                `Se superan los kilos de la línea. Kilos faltantes: ${linea.Kilos - kilosUsadosLinea}`
+                `Se superan los kilos de la línea. Kilos restantes disponibles: ${linea.Kilos_Restantes}`
             );
             return;
         }
@@ -138,7 +133,7 @@ module.exports = srv => {
         /*Actualizar kilos disponibles en la Entrada, dentro de la misma transacción (tx)
         garantizando que si falla la creación de Trazabilidad, no se descuentan los kilos*/
         await tx.run(
-            UPDATE(Entrada)
+            UPDATE('Entrada')
                 .set({
                     Kilos_disponibles: entrada.Kilos_disponibles - kilosTotales,
                     Kilos_Merma: (entrada.Kilos_Merma || 0) + Kilos_Merma
@@ -146,8 +141,18 @@ module.exports = srv => {
                 .where({ Id: Entrada_Id })
         );
 
+        /* Actualizar Kilos_Restantes de la Línea */
+        await tx.run(
+            UPDATE('Linea')
+                .set({
+                    Kilos_Restantes: linea.Kilos_Restantes - Kilos_Usados
+                })
+                .where({ Id: Linea_Id })
+        );
+
         /* 🔒 Limpieza: evitamos que CAP intente persistir Kilos_Merma */
         delete req.data.Kilos_Merma;
+
     });
 
     /**finalizar pedido */

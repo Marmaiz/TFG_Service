@@ -44,17 +44,18 @@ entity Pedido : managed {
 }
 
 entity Linea : managed {
-    key Id         : UUID;
-        Id_Display : String(100);
-        NumLinea   : Integer; 
-        Producto   : Association to Producto;
-        Variedad   : Association to Variedad;
-        Calibre    : Association to Calibre;
-        Caja       : Association to Caja;
-        Pedido     : Association to Pedido;
-        Kilos      : Integer;
-        toEntradas : Association to many Trazabilidad
-                         on toEntradas.Linea = $self;
+    key Id              : UUID;
+        Id_Display      : String(100);
+        NumLinea        : Integer;
+        Producto        : Association to Producto;
+        Variedad        : Association to Variedad;
+        Calibre         : Association to Calibre;
+        Caja            : Association to Caja;
+        Pedido          : Association to Pedido;
+        Kilos           : Integer;
+        Kilos_Restantes : Integer;
+        toEntradas      : Association to many Trazabilidad
+                              on toEntradas.Linea = $self;
 /*                                Entrada  : Association to many Entrada
                                               on Entrada.Id; */
 /* Entrada : Association to many Entrada; */
@@ -113,4 +114,3 @@ entity Socio {
         Direccion : String(100);
         Telefono  : String(10);
 }
-
