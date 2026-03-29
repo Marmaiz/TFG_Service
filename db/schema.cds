@@ -63,6 +63,7 @@ entity Linea : managed {
 
 entity Entrada : managed {
     key Id                : UUID;
+        Id_Display        : String(100);
         Socio             : Association to Socio;
         Fecha_recogida    : Date;
         Kilos             : Integer not null;
@@ -83,7 +84,7 @@ entity Trazabilidad {
         Entrada      : Association to Entrada;
 
         Kilos_Usados : Integer; // <-- Kilos usados de esa entrada
-        Kilos_Merma  : Integer @cds.persistence.skip;
+        Kilos_Merma  : Integer;
 }
 
 entity Estado : CodeList {

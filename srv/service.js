@@ -53,14 +53,32 @@ module.exports = srv => {
     });
 
 
-    srv.before('CREATE', 'Entrada', (req) => {
+   srv.before('CREATE', 'Entrada', async (req) => {
 
-        if (req.data.Kilos == null) {
-            req.error(400, 'El campo Kilos es obligatorio');
-            return;
-        }
-        // al crear la entrada igualo los kilos a los kilos disponibles
-        req.data.Kilos_disponibles = req.data.Kilos;
+        const { Producto_Id, Variedad_Id, Fecha_recogida,Calibre_Id,Socio_Id, Kilos } = req.data;
+
+        if (!Producto_Id) throw new Error('Producto es obligatorio para crear Entrada');
+        if (!Variedad_Id) throw new Error('Variedad es obligatorio para crear Entrada');
+        if (!Fecha_recogida) throw new Error('Fecha recogida es obligatoria para crear Entrada');
+        if (!Calibre_Id) throw new Error('Calibre es obligatorio para crear Entrada');
+        if (!Socio_Id) throw new Error('Socio es obligatorio para crear Entrada');
+        if (Kilos == null) throw new Error('El campo Kilos es obligatorio para crear Entrada');
+
+        const tx = cds.tx(req);
+
+        const producto = await tx.read('Producto').where({ Id: Producto_Id }).columns('Nombre');
+        if (!producto.length || !producto[0].Nombre) throw new Error('Producto no encontrado');
+
+        const variedad = await tx.read('Variedad').where({ Id: Variedad_Id }).columns('Nombre');
+        if (!variedad.length || !variedad[0].Nombre) throw new Error('Variedad no encontrada');
+
+        const productName = producto[0].Nombre.replace(/\s+/g, '_').toUpperCase().slice(0, 3);
+        const varietyName = variedad[0].Nombre.replace(/\s+/g, '_').toUpperCase().slice(0, 3);
+        const recoDate = new Date(Fecha_recogida).toISOString().slice(0, 10).replace(/-/g, '');
+        const nowDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+        req.data.Id_Display = `${productName}-${varietyName}-${recoDate}-${nowDate}`;
+        req.data.Kilos_disponibles = Kilos;
 
     });
 
@@ -148,10 +166,7 @@ module.exports = srv => {
                     Kilos_Restantes: linea.Kilos_Restantes - Kilos_Usados
                 })
                 .where({ Id: Linea_Id })
-        );
-
-        /* 🔒 Limpieza: evitamos que CAP intente persistir Kilos_Merma */
-        delete req.data.Kilos_Merma;
+        );        
 
     });
 
