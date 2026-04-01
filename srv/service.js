@@ -8,6 +8,7 @@ const REQUIRED_FIELDS = {
   Variedad: ["Nombre", "Producto_Id"],
   Socio: ["Nombre", "CIF", "Direccion", "Telefono"],
   Cliente: ["Nombre", "CIF", "Direccion", "Telefono"],
+  Entrada: ["Producto_Id", "Variedad_Id", "Fecha_recogida", "Calibre_Id", "Socio_Id", "Kilos"],
 };
 
 function isValidSpanishNIF(value) {
@@ -67,16 +68,26 @@ function checkRequiredFields(entityName, data, req) {
 }
 
 module.exports = (srv) => {
-  srv.before(["CREATE", "UPDATE"], ["Producto", "Calibre", "Caja", "Variedad", "Socio", "Cliente"], (req) => {
+  srv.before(["CREATE", "UPDATE"], ["Producto", "Calibre", "Caja", "Variedad", "Socio", "Cliente", "Entrada"], (req) => {
     const entityName = req.target.name ? req.target.name.split(".").pop() : req.target;
     checkRequiredFields(entityName, req.data, req);
   });
 
   srv.before("CREATE", "Pedido", async (req) => {
     const data = req.data;
-    const { Cliente_Id } = req.data;
+    const { Cliente_Id, Fecha_Pedido } = req.data;
 
     if (!Cliente_Id) throw new Error("Cliente requerido");
+
+    if (Fecha_Pedido) {
+      const pedidoDate = new Date(Fecha_Pedido);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      pedidoDate.setHours(0, 0, 0, 0);
+      if (pedidoDate < today) {
+        throw new Error("Fecha de pedido no puede ser anterior a hoy");
+      }
+    }
 
     const tx = cds.tx(req);
     const cliente = await tx
@@ -124,28 +135,18 @@ module.exports = (srv) => {
     }
   });
 
-  srv.before(["CREATE", "UPDATE"], "Entrada", async (req) => {
+  srv.before(["CREATE"], "Entrada", async (req) => {
     const {
       Producto_Id,
       Variedad_Id,
       Fecha_recogida,
-      Calibre_Id,
-      Socio_Id,
       Kilos,
     } = req.data;
 
-    if (!Producto_Id)
-      throw new Error("Producto es obligatorio para la entrada");
-    if (!Variedad_Id)
-      throw new Error("Variedad es obligatorio para la entrada");
-    if (!Fecha_recogida)
-      throw new Error("Fecha recogida es obligatoria para la entrada");
-    if (!Calibre_Id)
-      throw new Error("Calibre es obligatorio para la entrada");
-    if (!Socio_Id) 
-      throw new Error("Socio es obligatorio para la entrada");
-    if (Kilos <0)
-      throw new Error("El campo Kilos es obligatorio para la entrada");
+    
+    if (typeof Kilos !== "number" || Kilos <= 0) {
+      throw new Error("Kilos debe ser un número mayor que 0 para la entrada");
+    }
 
     const tx = cds.tx(req);
 
