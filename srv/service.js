@@ -59,10 +59,10 @@ function checkRequiredFields(entityName, data, req) {
 
   if (entityName === "Socio" || entityName === "Cliente") {
     if (data.CIF && !isValidSpanishNIF(data.CIF)) {
-      req.error(400, "CIF/NIF inválido para Socio/Cliente");
+      req.error(400, "CIF/NIF inválido");
     }
     if (data.Telefono && !isValidTelefono(data.Telefono)) {
-      req.error(400, "Teléfono inválido para Socio/Cliente");
+      req.error(400, "Teléfono inválido");
     }
   }
 }
