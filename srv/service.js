@@ -1,270 +1,317 @@
-
-const cds = require('@sap/cds');
+const cds = require("@sap/cds");
 const { Entrada } = cds.entities;
 
-module.exports = srv => {
+const REQUIRED_FIELDS = {
+  Calibre: ["Nombre", "Peso_Aprox_Pieza", "Producto_Id"],
+  Caja: ["Nombre", "Peso"],
+  Variedad: ["Nombre", "Producto_Id"],
+  Socio: ["Nombre", "CIF", "Direccion", "Telefono"],
+  Cliente: ["Nombre", "CIF", "Direccion", "Telefono"],
+};
 
-    srv.before('CREATE', 'Pedido', async req => {
-        const data = req.data;
-        const { Cliente_Id } = req.data;
+function checkRequiredFields(entityName, data, req) {
+  const required = REQUIRED_FIELDS[entityName];
+  if (!required) return;
+  const missing = required.filter(
+    (field) => data[field] === undefined || data[field] === null || data[field] === "",
+  );
+  if (missing.length) {
+    req.error(
+      400,
+      `Faltan campos obligatorios en ${entityName}: ${missing.join(", ")}`,
+    );
+  }
+}
 
-        if (!Cliente_Id) throw new Error('Cliente requerido');
+module.exports = (srv) => {
+  srv.before(["CREATE", "UPDATE"], ["Calibre", "Caja", "Variedad", "Socio", "Cliente"], (req) => {
+    const entityName = req.target.name ? req.target.name.split(".").pop() : req.target;
+    checkRequiredFields(entityName, req.data, req);
+  });
 
-        const tx = cds.tx(req);
-        const cliente = await tx.read('Cliente').where({ Id: Cliente_Id }).columns('Nombre');
+  srv.before("CREATE", "Pedido", async (req) => {
+    const data = req.data;
+    const { Cliente_Id } = req.data;
 
-        if (!cliente.length || !cliente[0].Nombre) throw new Error('Cliente no encontrado');
+    if (!Cliente_Id) throw new Error("Cliente requerido");
 
-        const prefix = cliente[0].Nombre.slice(0, 4).toUpperCase();
-        const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        const sec = Math.floor(Math.random() * 1000);
+    const tx = cds.tx(req);
+    const cliente = await tx
+      .read("Cliente")
+      .where({ Id: Cliente_Id })
+      .columns("Nombre");
 
-        req.data.Id_Display = `${prefix}-${date}-${sec.toString().padStart(3, '0')}`;
-    });
+    if (!cliente.length || !cliente[0].Nombre)
+      throw new Error("Cliente no encontrado");
 
+    const prefix = cliente[0].Nombre.slice(0, 4).toUpperCase();
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const sec = Math.floor(Math.random() * 1000);
 
-    srv.before('CREATE', 'Linea', async req => {
-        const { Pedido_Id } = req.data;
-        if (!Pedido_Id) throw new Error('Línea requiere Pedido_Id');
+    req.data.Id_Display = `${prefix}-${date}-${sec.toString().padStart(3, "0")}`;
+  });
 
-        const tx = cds.tx(req);
+  srv.before("CREATE", "Linea", async (req) => {
+    const { Pedido_Id } = req.data;
+    if (!Pedido_Id) throw new Error("Línea requiere Pedido_Id");
 
-        // 1. Obtener ID_Display del Pedido (no UUID)
-        const pedido = await tx.read('Pedido').where({ Id: Pedido_Id }).columns('Id_Display');
-        if (!pedido.length) throw new Error('Pedido no encontrado');
-        const pedDisplay = pedido[0].Id_Display;
+    const tx = cds.tx(req);
 
-        // 2. Siguiente NumLinea correlativa        
-        const maxResult = await tx.run(
-            SELECT`max(NumLinea) as maxNum`
-                .from('Linea')
-                .where({ Pedido_Id })
-        );
-        const maxLinea = maxResult[0]?.maxNum || 0;  
-        const num = maxLinea + 1;
+    // 1. Obtener ID_Display del Pedido (no UUID)
+    const pedido = await tx
+      .read("Pedido")
+      .where({ Id: Pedido_Id })
+      .columns("Id_Display");
+    if (!pedido.length) throw new Error("Pedido no encontrado");
+    const pedDisplay = pedido[0].Id_Display;
 
-        // 3. ID_Display: PEDIDO-ID-L01
-        req.data.NumLinea = num;
-        req.data.Id_Display = `${pedDisplay}-L${num.toString().padStart(2, '0')}`;
-                // 4. Inicializar Kilos_Restantes igual a Kilos
-        if (req.data.Kilos) {
-            req.data.Kilos_Restantes = req.data.Kilos;
-        }
-    });
+    // 2. Siguiente NumLinea correlativa
+    const maxResult = await tx.run(
+      SELECT`max(NumLinea) as maxNum`.from("Linea").where({ Pedido_Id }),
+    );
+    const maxLinea = maxResult[0]?.maxNum || 0;
+    const num = maxLinea + 1;
 
+    // 3. ID_Display: PEDIDO-ID-L01
+    req.data.NumLinea = num;
+    req.data.Id_Display = `${pedDisplay}-L${num.toString().padStart(2, "0")}`;
+    // 4. Inicializar Kilos_Restantes igual a Kilos
+    if (req.data.Kilos) {
+      req.data.Kilos_Restantes = req.data.Kilos;
+    }
+  });
 
-   srv.before('CREATE', 'Entrada', async (req) => {
+  srv.before(["CREATE", "UPDATE"], "Entrada", async (req) => {
+    const {
+      Producto_Id,
+      Variedad_Id,
+      Fecha_recogida,
+      Calibre_Id,
+      Socio_Id,
+      Kilos,
+    } = req.data;
 
-        const { Producto_Id, Variedad_Id, Fecha_recogida,Calibre_Id,Socio_Id, Kilos } = req.data;
+    if (!Producto_Id)
+      throw new Error("Producto es obligatorio para la entrada");
+    if (!Variedad_Id)
+      throw new Error("Variedad es obligatorio para la entrada");
+    if (!Fecha_recogida)
+      throw new Error("Fecha recogida es obligatoria para la entrada");
+    if (!Calibre_Id)
+      throw new Error("Calibre es obligatorio para la entrada");
+    if (!Socio_Id) 
+      throw new Error("Socio es obligatorio para la entrada");
+    if (Kilos <0)
+      throw new Error("El campo Kilos es obligatorio para la entrada");
 
-        if (!Producto_Id) throw new Error('Producto es obligatorio para crear Entrada');
-        if (!Variedad_Id) throw new Error('Variedad es obligatorio para crear Entrada');
-        if (!Fecha_recogida) throw new Error('Fecha recogida es obligatoria para crear Entrada');
-        if (!Calibre_Id) throw new Error('Calibre es obligatorio para crear Entrada');
-        if (!Socio_Id) throw new Error('Socio es obligatorio para crear Entrada');
-        if (Kilos == null) throw new Error('El campo Kilos es obligatorio para crear Entrada');
+    const tx = cds.tx(req);
 
-        const tx = cds.tx(req);
+    const producto = await tx
+      .read("Producto")
+      .where({ Id: Producto_Id })
+      .columns("Nombre");
+    if (!producto.length || !producto[0].Nombre)
+      throw new Error("Producto no encontrado");
 
-        const producto = await tx.read('Producto').where({ Id: Producto_Id }).columns('Nombre');
-        if (!producto.length || !producto[0].Nombre) throw new Error('Producto no encontrado');
+    const variedad = await tx
+      .read("Variedad")
+      .where({ Id: Variedad_Id })
+      .columns("Nombre");
+    if (!variedad.length || !variedad[0].Nombre)
+      throw new Error("Variedad no encontrada");
 
-        const variedad = await tx.read('Variedad').where({ Id: Variedad_Id }).columns('Nombre');
-        if (!variedad.length || !variedad[0].Nombre) throw new Error('Variedad no encontrada');
+    const productName = producto[0].Nombre.replace(/\s+/g, "_")
+      .toUpperCase()
+      .slice(0, 3);
+    const varietyName = variedad[0].Nombre.replace(/\s+/g, "_")
+      .toUpperCase()
+      .slice(0, 3);
+    const recoDate = new Date(Fecha_recogida)
+      .toISOString()
+      .slice(0, 10)
+      .replace(/-/g, "");
+    const nowDate = new Date().toISOString().slice(0, 10).replace(/-/g, "");
 
-        const productName = producto[0].Nombre.replace(/\s+/g, '_').toUpperCase().slice(0, 3);
-        const varietyName = variedad[0].Nombre.replace(/\s+/g, '_').toUpperCase().slice(0, 3);
-        const recoDate = new Date(Fecha_recogida).toISOString().slice(0, 10).replace(/-/g, '');
-        const nowDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    req.data.Id_Display = `${productName}-${varietyName}-${recoDate}-${nowDate}`;
+    req.data.Kilos_disponibles = Kilos;
+  });
 
-        req.data.Id_Display = `${productName}-${varietyName}-${recoDate}-${nowDate}`;
-        req.data.Kilos_disponibles = Kilos;
+  /**
+   * codigo a ejecutar antes (BEFORE) de crear un registro en Trazabilidad
+   */
+  srv.before("CREATE", "Trazabilidad", async (req) => {
+    /*Extraigo de req.data que contiene los datos que el cliente está intentando crear, el ID y los kilos*/
+    var Entrada_Id = req.data.Entrada_Id;
+    var Kilos_Usados = req.data.Kilos_Usados;
+    var Linea_Id = req.data.Linea_Id;
 
-    });
+    var Kilos_Merma = Number(req.data.Kilos_Merma || 0);
 
-    /**
-     * codigo a ejecutar antes (BEFORE) de crear un registro en Trazabilidad
-     */
-    srv.before('CREATE', 'Trazabilidad', async (req) => {
+    const kilosTotales = Kilos_Usados + Kilos_Merma;
 
-        /*Extraigo de req.data que contiene los datos que el cliente está intentando crear, el ID y los kilos*/
-        var Entrada_Id = req.data.Entrada_Id;
-        var Kilos_Usados = req.data.Kilos_Usados;
-        var Linea_Id = req.data.Linea_Id;
+    /*Detengo la ejecucion si no existen los datos*/
+    if (!Entrada_Id || !Kilos_Usados) return;
 
-        var Kilos_Merma = Number(req.data.Kilos_Merma || 0);
-
-        const kilosTotales = Kilos_Usados + Kilos_Merma;
-
-        /*Detengo la ejecucion si no existen los datos*/
-        if (!Entrada_Id || !Kilos_Usados) return;
-
-        /*Creo una variable que almacene la transaccion ligada al request
+    /*Creo una variable que almacene la transaccion ligada al request
             Todo lo que se ejecute con tx.run():
                 Se confirma (commit) si todo sale bien
                 Se revierte (rollback) si ocurre un error */
-        const tx = cds.tx(req);
+    const tx = cds.tx(req);
 
+    const entrada = await tx.run(
+      /* SELECT.one.from(Entrada).where({ Id: Entrada_Id }) */
+      SELECT.from(Entrada, Entrada_Id),
+    );
 
+    const linea = await tx.run(
+      SELECT.one.from("Linea").where({ Id: Linea_Id }),
+    );
 
-        const entrada = await tx.run(
-            /* SELECT.one.from(Entrada).where({ Id: Entrada_Id }) */
-            SELECT.from(Entrada, Entrada_Id)
-        );
+    /* validacion de la entrada */
+    /*Validar que la Entrada exista*/
+    if (!entrada) {
+      req.error(404, "Entrada no encontrada");
+      return;
+    }
+    /*Validar kilos disponibles de la entrada*/
+    if (entrada.Kilos_disponibles < Kilos_Usados) {
+      req.error(400, "No hay kilos disponibles suficientes");
+      return;
+    }
+    if (entrada.Kilos_disponibles < kilosTotales) {
+      req.error(400, "Kilos usados + merma superan los disponibles");
+      return;
+    }
 
-        const linea = await tx.run(
-            SELECT.one.from('Linea').where({ Id: Linea_Id })
-        );
+    /* validacion de la linea */
+    /*Validar que la linea exista*/
+    if (!linea) {
+      req.error(404, "Línea no encontrada");
+      return;
+    }
 
-   /* validacion de la entrada */
-        /*Validar que la Entrada exista*/
-        if (!entrada) {
-            req.error(404, 'Entrada no encontrada');
-            return;
-        }
-        /*Validar kilos disponibles de la entrada*/
-        if (entrada.Kilos_disponibles < Kilos_Usados) {
-            req.error(400, 'No hay kilos disponibles suficientes');
-            return;
-        }
-        if (entrada.Kilos_disponibles < kilosTotales) {
-            req.error(400, 'Kilos usados + merma superan los disponibles');
-            return;
-        }
+    /* Validar que no se superen los kilos restantes de la línea */
+    if (linea.Kilos_Restantes < Kilos_Usados) {
+      req.error(
+        400,
+        `Se superan los kilos de la línea. Kilos restantes disponibles: ${linea.Kilos_Restantes}`,
+      );
+      return;
+    }
 
-/* validacion de la linea */
-        /*Validar que la linea exista*/
-        if (!linea) {
-            req.error(404, 'Línea no encontrada');
-            return;
-        }
-
-        /* Validar que no se superen los kilos restantes de la línea */
-        if (linea.Kilos_Restantes < Kilos_Usados) {
-            req.error(
-                400,
-                `Se superan los kilos de la línea. Kilos restantes disponibles: ${linea.Kilos_Restantes}`
-            );
-            return;
-        }
-
-        /*Actualizar kilos disponibles en la Entrada, dentro de la misma transacción (tx)
+    /*Actualizar kilos disponibles en la Entrada, dentro de la misma transacción (tx)
         garantizando que si falla la creación de Trazabilidad, no se descuentan los kilos*/
-        await tx.run(
-            UPDATE('Entrada')
-                .set({
-                    Kilos_disponibles: entrada.Kilos_disponibles - kilosTotales,
-                    Kilos_Merma: (entrada.Kilos_Merma || 0) + Kilos_Merma
-                })
-                .where({ Id: Entrada_Id })
+    await tx.run(
+      UPDATE("Entrada")
+        .set({
+          Kilos_disponibles: entrada.Kilos_disponibles - kilosTotales,
+          Kilos_Merma: (entrada.Kilos_Merma || 0) + Kilos_Merma,
+        })
+        .where({ Id: Entrada_Id }),
+    );
+
+    /* Actualizar Kilos_Restantes de la Línea */
+    await tx.run(
+      UPDATE("Linea")
+        .set({
+          Kilos_Restantes: linea.Kilos_Restantes - Kilos_Usados,
+        })
+        .where({ Id: Linea_Id }),
+    );
+  });
+
+  /**finalizar pedido */
+  srv.before("UPDATE", "Pedido", async (req) => {
+    // Verifico que exista el campo Estado del pedido
+    const nuevoEstado = req.data.Estado_code;
+    if (!nuevoEstado) return;
+
+    // Declaro una variable para almacenar la transaccion
+    const tx = cds.tx(req);
+
+    // Selecciono el pedido de la consulta
+    const pedido = await tx.run(
+      SELECT.one.from("Pedido").where({ Id: req.data.Id }),
+    );
+
+    // Selecciono las líneas del pedido
+    const lineas = await tx.run(
+      SELECT.from("Linea").where({ Pedido_Id: pedido.Id }),
+    );
+
+    // Hago las comprobaciones
+    if (!pedido) {
+      req.error(404, "Pedido no encontrado");
+      return;
+    }
+
+    if (!lineas.length) {
+      req.error(400, "El pedido no tiene líneas");
+      return;
+    }
+
+    // Valido que las lineas tengan los campos obligatorios, y kilos con un valor positivo
+    for (const linea of lineas) {
+      if (
+        !linea.Producto_Id ||
+        !linea.Variedad_Id ||
+        !linea.Caja_Id ||
+        !linea.Calibre_Id ||
+        !linea.Kilos ||
+        linea.Kilos <= 0
+      ) {
+        req.error(400, "Existen líneas con campos obligatorios vacíos");
+        return;
+      }
+    }
+
+    // Compruebo que el pedido no este finalizado ya
+    if (pedido.Estado_code === "F") {
+      req.error(400, "El pedido ya está finalizado");
+      return;
+    }
+
+    if (nuevoEstado === "F") {
+      // Valido que al pedido se le hayan asignado entradas antes de cambiar su estado de Creado a Procesando
+      let trazabilidad = await tx.run(
+        SELECT.from("Trazabilidad").where({ "Linea.Pedido_Id": pedido.Id }),
+      );
+
+      if (!trazabilidad.length) {
+        req.error(400, "El pedido no tiene asignada entradas");
+        return;
+      }
+
+      const lineas = await tx.run(
+        SELECT.from("Linea").where({ Pedido_Id: pedido.Id }),
+      );
+
+      for (const linea of lineas) {
+        const result = await tx.run(
+          SELECT.one.from("Trazabilidad")
+            .columns`sum(Kilos_Usados) as total`.where({ Linea_Id: linea.Id }),
         );
 
-        /* Actualizar Kilos_Restantes de la Línea */
-        await tx.run(
-            UPDATE('Linea')
-                .set({
-                    Kilos_Restantes: linea.Kilos_Restantes - Kilos_Usados
-                })
-                .where({ Id: Linea_Id })
-        );        
+        // Devuelve los kilos asignados, si no existen asumo que son 0 kilos
+        const kilosAsignados = result?.total || 0;
 
-    });
-
-    /**finalizar pedido */
-    srv.before('UPDATE', 'Pedido', async (req) => {
-
-        // Verifico que exista el campo Estado del pedido
-        const nuevoEstado = req.data.Estado_code;
-        if (!nuevoEstado) return;
-
-        // Declaro una variable para almacenar la transaccion
-        const tx = cds.tx(req);
-
-        // Selecciono el pedido de la consulta 
-        const pedido = await tx.run(
-            SELECT.one.from('Pedido').where({ Id: req.data.Id })
-        );
-
-        // Selecciono las líneas del pedido
-        const lineas = await tx.run(
-            SELECT.from('Linea').where({ Pedido_Id: pedido.Id })
-        );
-
-        // Hago las comprobaciones
-        if (!pedido) {
-            req.error(404, 'Pedido no encontrado');
-            return;
+        if (kilosAsignados !== linea.Kilos) {
+          req.error(400, "No se puede finalizar la línea, faltan kilos.");
+          return;
         }
+      }
+    }
+  });
 
-        if (!lineas.length) {
-            req.error(400, 'El pedido no tiene líneas');
-            return;
-        }
+ /*  srv.before("CREATE", "Producto", async (req) => {
+    const {
+      Nombre     
+    } = req.data;
 
-        // Valido que las lineas tengan los campos obligatorios, y kilos con un valor positivo
-        for (const linea of lineas) {
-            if (
-                !linea.Producto_Id ||
-                !linea.Variedad_Id ||
-                !linea.Caja_Id ||
-                !linea.Calibre_Id ||
-                !linea.Kilos ||
-                linea.Kilos <= 0
-            ) {
-                req.error(400, 'Existen líneas con campos obligatorios vacíos');
-                return;
-            }
-        }
-
-        // Compruebo que el pedido no este finalizado ya
-        if (pedido.Estado_code === 'F') {
-            req.error(400, 'El pedido ya está finalizado');
-            return;
-        }
-
-        if (nuevoEstado === 'F') {
-            // Valido que al pedido se le hayan asignado entradas antes de cambiar su estado de Creado a Procesando
-            let trazabilidad = await tx.run(
-                SELECT.from('Trazabilidad')
-                    .where({ 'Linea.Pedido_Id': pedido.Id })
-            );
-
-            if (!trazabilidad.length) {
-                req.error(400, 'El pedido no tiene asignada entradas');
-                return;
-            }
-
-            const lineas = await tx.run(
-                SELECT.from('Linea').where({ Pedido_Id: pedido.Id })
-            );
-
-            for (const linea of lineas) {
-                const result = await tx.run(
-                    SELECT.one
-                        .from('Trazabilidad')
-                        .columns`sum(Kilos_Usados) as total`
-                        .where({ Linea_Id: linea.Id })
-                );
-
-                // Devuelve los kilos asignados, si no existen asumo que son 0 kilos
-                const kilosAsignados = result?.total || 0;
-
-                if (kilosAsignados !== linea.Kilos) {
-                    req.error(
-                        400,
-                        'No se puede finalizar la línea, faltan kilos.'
-                    );
-                    return;
-                }
-            }
-        }
-
-    });
-
-
-
-
-
+    if (!Nombre)
+      throw new Error("Nombre es obligatorio para crear producto");
+    
+  }); */
 
 
 };
