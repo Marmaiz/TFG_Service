@@ -2,12 +2,46 @@ const cds = require("@sap/cds");
 const { Entrada } = cds.entities;
 
 const REQUIRED_FIELDS = {
+  Producto:["Nombre"],
   Calibre: ["Nombre", "Peso_Aprox_Pieza", "Producto_Id"],
   Caja: ["Nombre", "Peso"],
   Variedad: ["Nombre", "Producto_Id"],
   Socio: ["Nombre", "CIF", "Direccion", "Telefono"],
   Cliente: ["Nombre", "CIF", "Direccion", "Telefono"],
 };
+
+function isValidSpanishNIF(value) {
+  if (!value || typeof value !== "string") return false;
+  const nif = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+  const dniLetters = "TRWAGMYFPDXBNJZSQVHLCKE";
+
+  const dni = nif.match(/^([0-9]{8})([A-Z])$/);
+  if (dni) {
+    const num = parseInt(dni[1], 10);
+    return dniLetters[num % 23] === dni[2];
+  }
+
+  const nie = nif.match(/^([XYZ])([0-9]{7})([A-Z])$/);
+  if (nie) {
+    const prefix = { X: "0", Y: "1", Z: "2" }[nie[1]];
+    const num = parseInt(prefix + nie[2], 10);
+    return dniLetters[num % 23] === nie[3];
+  }
+
+  const cif = nif.match(/^[ABCDEFGHJKLMNPQRSUVW][0-9]{7}[0-9A-J]$/);
+  if (cif) {
+    return true;
+  }
+
+  return false;
+}
+
+function isValidTelefono(value) {
+  if (!value || typeof value !== "string") return false;
+  const clean = value.replace(/[^0-9+]/g, "");
+  return /^(\+34)?[6789][0-9]{8}$/.test(clean);
+}
 
 function checkRequiredFields(entityName, data, req) {
   const required = REQUIRED_FIELDS[entityName];
@@ -21,10 +55,19 @@ function checkRequiredFields(entityName, data, req) {
       `Faltan campos obligatorios en ${entityName}: ${missing.join(", ")}`,
     );
   }
+
+  if (entityName === "Socio" || entityName === "Cliente") {
+    if (data.CIF && !isValidSpanishNIF(data.CIF)) {
+      req.error(400, "CIF/NIF inválido para Socio/Cliente");
+    }
+    if (data.Telefono && !isValidTelefono(data.Telefono)) {
+      req.error(400, "Teléfono inválido para Socio/Cliente");
+    }
+  }
 }
 
 module.exports = (srv) => {
-  srv.before(["CREATE", "UPDATE"], ["Calibre", "Caja", "Variedad", "Socio", "Cliente"], (req) => {
+  srv.before(["CREATE", "UPDATE"], ["Producto", "Calibre", "Caja", "Variedad", "Socio", "Cliente"], (req) => {
     const entityName = req.target.name ? req.target.name.split(".").pop() : req.target;
     checkRequiredFields(entityName, req.data, req);
   });

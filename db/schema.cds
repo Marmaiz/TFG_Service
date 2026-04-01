@@ -16,21 +16,21 @@ entity Producto {
 
 entity Calibre {
     key Id               : UUID;
-        Nombre           : String(50) not null;
-        Peso_Aprox_Pieza : String(20) not null;
-        Producto         : Association to Producto not null;
+        Nombre           : String(50);
+        Peso_Aprox_Pieza : String(20);
+        Producto         : Association to Producto;
 }
 
 entity Caja {
     key Id     : UUID;
-        Nombre : String(50) not null;
-        Peso   : Integer not null;
+        Nombre : String(50);
+        Peso   : Integer;
 };
 
 entity Variedad {
     key Id       : UUID;
-        Nombre   : String(100) not null;
-        Producto : Association to Producto not null;
+        Nombre   : String(100);
+        Producto : Association to Producto;
 }
 
 entity Pedido : managed {
@@ -102,16 +102,16 @@ entity Estado : CodeList {
 
 entity Cliente {
     key Id        : UUID;
-        Nombre    : String(50) not null;
-        CIF       : String(10) not null;
-        Direccion : String(100) not null;
-        Telefono  : String(10) not null;
+        Nombre    : String(50);
+        CIF       : String(10);
+        Direccion : String(100);
+        Telefono  : String(10);
 }
 
 entity Socio {
     key Id        : UUID;
-        Nombre    : String(50) not null;
-        CIF       : String(10) not null;
-        Direccion : String(100) not null;
-        Telefono  : String(10) not null;
+        Nombre    : String(50);
+        CIF       : String(10);
+        Direccion : String(100);
+        Telefono  : String(10);
 }
