@@ -1,5 +1,5 @@
 const cds = require("@sap/cds");
-const { Entrada } = cds.entities;
+/* const { Entrada } = cds.entities; */
 
 const REQUIRED_FIELDS = {
   Producto:["Nombre"],
@@ -8,7 +8,7 @@ const REQUIRED_FIELDS = {
   Variedad: ["Nombre", "Producto_Id"],
   Socio: ["Nombre", "CIF", "Direccion", "Telefono"],
   Cliente: ["Nombre", "CIF", "Direccion", "Telefono"],
-  Entrada: ["Producto_Id", "Variedad_Id", "Fecha_recogida", "Calibre_Id", "Socio_Id", "Kilos"],
+  Entrada: ["Producto_Id", "Variedad_Id", "Fecha_recogida", "Calibre_Id", "Socio_Id"],
 };
 
 function isValidSpanishNIF(value) {
@@ -51,18 +51,18 @@ function checkRequiredFields(entityName, data, req) {
     (field) => data[field] === undefined || data[field] === null || data[field] === "",
   );
   if (missing.length) {
-    req.error(
-      400,
-      `Faltan campos obligatorios en ${entityName}: ${missing.join(", ")}`,
+    const missingFormatted = missing.map(field => field.replace(/_Id$/, "").replace(/_/g, " "));
+    throw new Error(
+      `Faltan campos obligatorios en ${entityName}: ${missingFormatted.join(", ")}`,
     );
   }
 
   if (entityName === "Socio" || entityName === "Cliente") {
     if (data.CIF && !isValidSpanishNIF(data.CIF)) {
-      req.error(400, "CIF/NIF inválido");
+      throw new Error("CIF/NIF inválido");
     }
     if (data.Telefono && !isValidTelefono(data.Telefono)) {
-      req.error(400, "Teléfono inválido");
+      throw new Error("Teléfono inválido");
     }
   }
 }
@@ -135,8 +135,7 @@ module.exports = (srv) => {
     }
   });
 
-  srv.before(["CREATE"], "Entrada", async (req) => {     
-    checkRequiredFields("Entrada", req.data, req);
+  srv.before(["CREATE"], "Entrada", async (req) => {      
 
     const {
       Producto_Id,
