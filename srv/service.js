@@ -68,7 +68,7 @@ function checkRequiredFields(entityName, data, req) {
 }
 
 module.exports = (srv) => {
-  srv.before(["CREATE", "UPDATE"], ["Producto", "Calibre", "Caja", "Variedad", "Socio", "Cliente", "Entrada", "EntradaDraft"], (req) => {
+  srv.before(["CREATE", "UPDATE"], ["Producto", "Calibre", "Caja", "Variedad", "Socio", "Cliente", "Entrada"], (req) => {
     const entityName = req.target.name ? req.target.name.split(".").pop() : req.target;
     checkRequiredFields(entityName, req.data, req);
   });
@@ -135,7 +135,9 @@ module.exports = (srv) => {
     }
   });
 
-  srv.before(["CREATE"], "Entrada", async (req) => {
+  srv.before(["CREATE"], "Entrada", async (req) => {     
+    checkRequiredFields("Entrada", req.data, req);
+
     const {
       Producto_Id,
       Variedad_Id,
