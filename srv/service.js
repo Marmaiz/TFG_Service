@@ -8,7 +8,7 @@ const REQUIRED_FIELDS = {
   Variedad: ["Nombre", "Producto_Id"],
   Socio: ["Nombre", "CIF", "Direccion", "Telefono"],
   Cliente: ["Nombre", "CIF", "Direccion", "Telefono"],
-  Entrada: ["Producto_Id", "Variedad_Id", "Fecha_recogida", "Calibre_Id", "Socio_Id"],
+  Entrada: ["Producto_Id", "Variedad_Id", "Fecha_recogida", "Calibre_Id", "Socio_Id", "Kilos"],
 };
 
 function isValidSpanishNIF(value) {
@@ -179,6 +179,14 @@ module.exports = (srv) => {
 
     req.data.Id_Display = `${productName}-${varietyName}-${recoDate}-${nowDate}`;
     req.data.Kilos_disponibles = Kilos;
+  });
+
+  srv.before(["UPDATE"], "Entrada", async (req) => {  
+    const { Kilos } = req.data;
+    
+    if (Kilos !== undefined && (typeof Kilos !== "number" || Kilos <= 0)) {
+      throw new Error("Kilos debe ser un número mayor que 0 para la entrada");
+    }
   });
 
   /**
