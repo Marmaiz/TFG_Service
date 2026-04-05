@@ -421,7 +421,7 @@ module.exports = (srv) => {
         const kilosAsignados = result?.total || 0;
 
         if (kilosAsignados !== linea.Kilos) {
-          req.error(400, "No se puede finalizar la línea, faltan kilos.");
+          req.error(400, "No se puede finalizar el pedido, faltan kilos por asignar.");
           return;
         }
       }
