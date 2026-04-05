@@ -1,5 +1,5 @@
 const cds = require("@sap/cds");
-/* const { Entrada } = cds.entities; */
+const { Entrada } = cds.entities;
 
 const REQUIRED_FIELDS = {
   Producto:["Nombre"],
@@ -85,7 +85,7 @@ module.exports = (srv) => {
       today.setHours(0, 0, 0, 0);
       pedidoDate.setHours(0, 0, 0, 0);
       if (pedidoDate < today) {
-        throw new Error("Fecha de pedido no puede ser anterior a hoy");
+        throw new Error("La fecha de pedido no puede ser anterior a hoy");
       }
     }
 
@@ -103,6 +103,22 @@ module.exports = (srv) => {
     const sec = Math.floor(Math.random() * 1000);
 
     req.data.Id_Display = `${prefix}-${date}-${sec.toString().padStart(3, "0")}`;
+  });
+
+   srv.before( "UPDATE", "Pedido", async (req) => {
+    const data = req.data;
+    const { Fecha_Pedido } = req.data;   
+
+    if (Fecha_Pedido) {
+      const pedidoDate = new Date(Fecha_Pedido);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      pedidoDate.setHours(0, 0, 0, 0);
+      if (pedidoDate < today) {
+        throw new Error("La fecha de pedido no puede ser anterior a hoy");
+      }
+    }
+    
   });
 
   srv.before("CREATE", "Linea", async (req) => {
