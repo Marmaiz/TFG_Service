@@ -1,5 +1,5 @@
 const cds = require("@sap/cds");
-const { Entrada } = cds.entities;
+/* const { Entrada } = cds.entities; */
 
 const REQUIRED_FIELDS = {
   Producto:["Nombre"],
@@ -228,8 +228,8 @@ module.exports = (srv) => {
     const tx = cds.tx(req);
 
     const entrada = await tx.run(
-      /* SELECT.one.from(Entrada).where({ Id: Entrada_Id }) */
-      SELECT.from(Entrada, Entrada_Id),
+      SELECT.one.from("Entrada").where({ Id: Entrada_Id })
+      /* SELECT.from(Entrada, Entrada_Id), */
     );
 
     const linea = await tx.run(
@@ -286,6 +286,62 @@ module.exports = (srv) => {
           Kilos_Restantes: linea.Kilos_Restantes - Kilos_Usados,
         })
         .where({ Id: Linea_Id }),
+    );
+  });
+
+  srv.before("DELETE", "Trazabilidad", async (req) => {
+    const tx = cds.tx(req);
+    const trazabilidad = await tx.run(
+      SELECT.one.from("Trazabilidad").where({ Id: req.data.Id }),
+    );
+
+    if (!req.data?.Id) {
+      req.error(400, "Se requiere Id para eliminar la trazabilidad");
+      return;
+    }
+
+    if (!trazabilidad) {
+      req.error(404, "Trazabilidad no encontrada");
+      return;
+    }
+
+    const entrada = await tx.run(
+      SELECT.one.from("Entrada").where({ Id: trazabilidad.Entrada_Id }),
+    );
+
+    if (!entrada) {
+      req.error(404, "Entrada asociada no encontrada");
+      return;
+    }
+
+    const linea = await tx.run(
+      SELECT.one.from("Linea").where({ Id: trazabilidad.Linea_Id }),
+    );
+
+    if (!linea) {
+      req.error(404, "Línea asociada no encontrada");
+      return;
+    }
+
+    const kilosUsados = Number(trazabilidad.Kilos_Usados || 0);
+    const kilosMerma = Number(trazabilidad.Kilos_Merma || 0);
+    const kilosTotales = kilosUsados + kilosMerma;
+
+    await tx.run(
+      UPDATE("Entrada")
+        .set({
+          Kilos_disponibles: Number(entrada.Kilos_disponibles || 0) + kilosTotales,
+          Kilos_Merma: Math.max(Number(entrada.Kilos_Merma || 0) - kilosMerma, 0),
+        })
+        .where({ Id: trazabilidad.Entrada_Id }),
+    );
+
+    await tx.run(
+      UPDATE("Linea")
+        .set({
+          Kilos_Restantes: Number(linea.Kilos_Restantes || 0) + kilosUsados,
+        })
+        .where({ Id: trazabilidad.Linea_Id }),
     );
   });
 
