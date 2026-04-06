@@ -67,7 +67,119 @@ function checkRequiredFields(entityName, data, req) {
   }
 }
 
+async function validateEntradaDependencies(tx, productoId, variedadId, calibreId) {
+  if (!productoId) return;
+
+  if (variedadId) {
+    const variedad = await tx
+      .read("Variedad")
+      .where({ Id: variedadId })
+      .columns("Id", "Producto_Id");
+
+    if (!variedad.length) {
+      throw new Error("Variedad no encontrada");
+    }
+
+    if (variedad[0].Producto_Id !== productoId) {
+      throw new Error("La variedad seleccionada no pertenece al producto indicado");
+    }
+  }
+
+  if (calibreId) {
+    const calibre = await tx
+      .read("Calibre")
+      .where({ Id: calibreId })
+      .columns("Id", "Producto_Id");
+
+    if (!calibre.length) {
+      throw new Error("Calibre no encontrado");
+    }
+
+    if (calibre[0].Producto_Id !== productoId) {
+      throw new Error("El calibre seleccionado no pertenece al producto indicado");
+    }
+  }
+}
+
 module.exports = (srv) => {
+  async function cleanupTrazabilidadForLineas(tx, lineaIds) {
+    if (!lineaIds?.length) return;
+
+    const trazabilidades = await tx.run(
+      SELECT.from("Trazabilidad")
+        .columns("Id", "Entrada_Id", "Linea_Id", "Kilos_Usados", "Kilos_Merma")
+        .where({ Linea_Id: { in: lineaIds } }),
+    );
+
+    if (!trazabilidades.length) return;
+
+    const entradaDeltas = new Map();
+    const lineaDeltas = new Map();
+
+    for (const traz of trazabilidades) {
+      const usados = Number(traz.Kilos_Usados || 0);
+      const merma = Number(traz.Kilos_Merma || 0);
+      const total = usados + merma;
+
+      if (!entradaDeltas.has(traz.Entrada_Id)) {
+        entradaDeltas.set(traz.Entrada_Id, { disponibles: 0, merma: 0 });
+      }
+      const entradaDelta = entradaDeltas.get(traz.Entrada_Id);
+      entradaDelta.disponibles += total;
+      entradaDelta.merma += merma;
+
+      if (!lineaDeltas.has(traz.Linea_Id)) {
+        lineaDeltas.set(traz.Linea_Id, { restantes: 0 });
+      }
+      const lineaDelta = lineaDeltas.get(traz.Linea_Id);
+      lineaDelta.restantes += usados;
+    }
+
+    const entradaIds = Array.from(entradaDeltas.keys());
+    const entradas = await tx.run(
+      SELECT.from("Entrada")
+        .columns("Id", "Kilos_disponibles", "Kilos_Merma")
+        .where({ Id: { in: entradaIds } }),
+    );
+
+    for (const entrada of entradas) {
+      const delta = entradaDeltas.get(entrada.Id);
+      if (!delta) continue;
+
+      await tx.run(
+        UPDATE("Entrada")
+          .set({
+            Kilos_disponibles: Number(entrada.Kilos_disponibles || 0) + delta.disponibles,
+            Kilos_Merma: Math.max(Number(entrada.Kilos_Merma || 0) - delta.merma, 0),
+          })
+          .where({ Id: entrada.Id }),
+      );
+    }
+
+    const lineas = await tx.run(
+      SELECT.from("Linea")
+        .columns("Id", "Kilos_Restantes")
+        .where({ Id: { in: lineaIds } }),
+    );
+
+    for (const linea of lineas) {
+      const delta = lineaDeltas.get(linea.Id);
+      if (!delta) continue;
+
+      await tx.run(
+        UPDATE("Linea")
+          .set({
+            Kilos_Restantes: Number(linea.Kilos_Restantes || 0) + delta.restantes,
+          })
+          .where({ Id: linea.Id }),
+      );
+    }
+
+    await tx.run(
+      DELETE.from("Trazabilidad").where({ Linea_Id: { in: lineaIds } }),
+    );
+  }
+
   srv.before(["CREATE", "UPDATE"], ["Producto", "Calibre", "Caja", "Variedad", "Socio", "Cliente", "Entrada"], (req) => {
     const entityName = req.target.name ? req.target.name.split(".").pop() : req.target;
     checkRequiredFields(entityName, req.data, req);
@@ -156,6 +268,7 @@ module.exports = (srv) => {
     const {
       Producto_Id,
       Variedad_Id,
+      Calibre_Id,
       Fecha_recogida,
       Kilos,
     } = req.data;
@@ -163,6 +276,16 @@ module.exports = (srv) => {
     
     if (typeof Kilos !== "number" || Kilos <= 0) {
       throw new Error("Kilos debe ser un número mayor que 0 para la entrada");
+    }
+
+    if (Fecha_recogida) {
+      const fechaRecogida = new Date(Fecha_recogida);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      fechaRecogida.setHours(0, 0, 0, 0);
+      if (fechaRecogida > today) {
+        throw new Error("La fecha de recogida no puede ser posterior a hoy");
+      }
     }
 
     const tx = cds.tx(req);
@@ -177,9 +300,15 @@ module.exports = (srv) => {
     const variedad = await tx
       .read("Variedad")
       .where({ Id: Variedad_Id })
-      .columns("Nombre");
+      .columns("Nombre", "Producto_Id");
     if (!variedad.length || !variedad[0].Nombre)
       throw new Error("Variedad no encontrada");
+
+    if (variedad[0].Producto_Id !== Producto_Id) {
+      throw new Error("La variedad seleccionada no pertenece al producto indicado");
+    }
+
+    await validateEntradaDependencies(tx, Producto_Id, Variedad_Id, Calibre_Id);
 
     const productName = producto[0].Nombre.replace(/\s+/g, "_")
       .toUpperCase()
@@ -198,11 +327,59 @@ module.exports = (srv) => {
   });
 
   srv.before(["UPDATE"], "Entrada", async (req) => {  
-    const { Kilos } = req.data;
+    const { Kilos, Producto_Id, Variedad_Id, Calibre_Id, Fecha_recogida } = req.data;
     
     if (Kilos !== undefined && (typeof Kilos !== "number" || Kilos <= 0)) {
       throw new Error("Kilos debe ser un número mayor que 0 para la entrada");
     }
+
+    if (Fecha_recogida) {
+      const fechaRecogida = new Date(Fecha_recogida);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      fechaRecogida.setHours(0, 0, 0, 0);
+      if (fechaRecogida > today) {
+        throw new Error("La fecha de recogida no puede ser posterior a hoy");
+      }
+    }
+
+    if (Producto_Id === undefined && Variedad_Id === undefined && Calibre_Id === undefined) {
+      return;
+    }
+
+    const tx = cds.tx(req);
+
+    const currentEntrada = await tx.run(
+      SELECT.one.from("Entrada")
+        .where({ Id: req.data.Id })
+        .columns("Id", "Producto_Id", "Variedad_Id", "Calibre_Id"),
+    );
+
+    if (!currentEntrada) {
+      throw new Error("Entrada no encontrada");
+    }
+
+    if (Producto_Id !== undefined && Producto_Id !== currentEntrada.Producto_Id) {
+      if (Variedad_Id === undefined) req.data.Variedad_Id = null;
+      if (Calibre_Id === undefined) req.data.Calibre_Id = null;
+    }
+
+    const effectiveProductoId = req.data.Producto_Id !== undefined
+      ? req.data.Producto_Id
+      : currentEntrada.Producto_Id;
+    const effectiveVariedadId = req.data.Variedad_Id !== undefined
+      ? req.data.Variedad_Id
+      : currentEntrada.Variedad_Id;
+    const effectiveCalibreId = req.data.Calibre_Id !== undefined
+      ? req.data.Calibre_Id
+      : currentEntrada.Calibre_Id;
+
+    await validateEntradaDependencies(
+      tx,
+      effectiveProductoId,
+      effectiveVariedadId,
+      effectiveCalibreId,
+    );
   });
 
   /**
@@ -275,6 +452,7 @@ module.exports = (srv) => {
         .set({
           Kilos_disponibles: entrada.Kilos_disponibles - kilosTotales,
           Kilos_Merma: (entrada.Kilos_Merma || 0) + Kilos_Merma,
+          Estado_code: (entrada.Kilos_disponibles - kilosTotales) <= 0 ? "V" : "D",
         })
         .where({ Id: Entrada_Id }),
     );
@@ -332,6 +510,7 @@ module.exports = (srv) => {
         .set({
           Kilos_disponibles: Number(entrada.Kilos_disponibles || 0) + kilosTotales,
           Kilos_Merma: Math.max(Number(entrada.Kilos_Merma || 0) - kilosMerma, 0),
+          Estado_code: (Number(entrada.Kilos_disponibles || 0) + kilosTotales) <= 0 ? "V" : "D",
         })
         .where({ Id: trazabilidad.Entrada_Id }),
     );
@@ -343,6 +522,49 @@ module.exports = (srv) => {
         })
         .where({ Id: trazabilidad.Linea_Id }),
     );
+  });
+
+  srv.before("DELETE", "Linea", async (req) => {
+    if (!req.data?.Id) {
+      req.error(400, "Se requiere Id para eliminar la línea");
+      return;
+    }
+
+    const tx = cds.tx(req);
+    const linea = await tx.run(
+      SELECT.one.from("Linea").where({ Id: req.data.Id }).columns("Id"),
+    );
+
+    if (!linea) {
+      req.error(404, "Línea no encontrada");
+      return;
+    }
+
+    await cleanupTrazabilidadForLineas(tx, [linea.Id]);
+  });
+
+  srv.before("DELETE", "Pedido", async (req) => {
+    if (!req.data?.Id) {
+      req.error(400, "Se requiere Id para eliminar el pedido");
+      return;
+    }
+
+    const tx = cds.tx(req);
+    const pedido = await tx.run(
+      SELECT.one.from("Pedido").where({ Id: req.data.Id }).columns("Id"),
+    );
+
+    if (!pedido) {
+      req.error(404, "Pedido no encontrado");
+      return;
+    }
+
+    const lineas = await tx.run(
+      SELECT.from("Linea").columns("Id").where({ Pedido_Id: pedido.Id }),
+    );
+
+    const lineaIds = lineas.map((linea) => linea.Id);
+    await cleanupTrazabilidadForLineas(tx, lineaIds);
   });
 
   /**finalizar pedido */
